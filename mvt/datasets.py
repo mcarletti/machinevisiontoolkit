@@ -23,6 +23,7 @@ def get_dataset(name: str, root: str, split: str, task: str, transform: callable
 
     DATA_ZOO = {
         "cifar10":  (CIFAR,  {"num_classes":  10}),
+        "cifar20":  (CIFAR,  {"num_classes":  20}),
         "cifar100": (CIFAR,  {"num_classes": 100}),
         "imagenet": (ILSVRC, {}),
         "coco":     (COCO,   {}),
@@ -136,7 +137,7 @@ class CIFAR(_Dataset):
         """
         self.num_classes = kwargs.pop("num_classes", None)
         assert self.num_classes is not None, "Number of classes not provided for CIFAR dataset"
-        assert self.num_classes in [10, 100], "Invalid number of classes for CIFAR dataset. Choose 10 or 100."
+        assert self.num_classes in [10, 20, 100], "Invalid number of classes for CIFAR dataset. Choose 10, 20 or 100."
         super(CIFAR, self).__init__(transform=transform, *args, **kwargs)
 
         assert os.path.exists(root), f"Dataset directory not found: {root}"
@@ -165,12 +166,15 @@ class CIFAR(_Dataset):
                 file_data = _unpickle(file_path)
                 self.data = file_data[b"data"]
                 self.labels = file_data[b"labels"]
-        elif self.num_classes == 100:
+            self.class_names = [c.decode("utf-8") for c in _unpickle(os.path.join(root, "cifar", "cifar-10-batches-py", "batches.meta"))[b"label_names"]]
+        elif self.num_classes in [20, 100]:
             split = "train" if split == "train" else "test"
             file_path = os.path.join(root, "cifar", "cifar-100-python", f"{split}")
             file_data = _unpickle(file_path)
             self.data = file_data[b"data"]
-            self.labels = file_data[b"fine_labels"]
+            labels_key, label_names_key = (b"coarse_labels", b"coarse_label_names") if self.num_classes == 20 else (b"fine_labels", b"fine_label_names")
+            self.labels = file_data[labels_key]
+            self.class_names = [c.decode("utf-8") for c in _unpickle(os.path.join(root, "cifar", "cifar-100-python", "meta"))[label_names_key]]
 
         self.data = self.data.reshape(-1, 3, 32, 32)
         self.data = self.data.transpose((0, 2, 3, 1))

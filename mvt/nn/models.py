@@ -7,7 +7,7 @@ import mvt.nn.layers
 import mvt.nn.utils
 
 
-def get_model(name: str, input_shape: tuple, num_classes: int=None, checkpoint: str=None) -> torch.nn.Module:
+def get_model(name: str, input_shape: tuple, num_classes: int=None, checkpoint: str=None, strict: bool=False) -> torch.nn.Module:
     """
     Get a model instance from the model zoo.
     It also performs a fake forward pass to check if the model works properly.
@@ -41,20 +41,20 @@ def get_model(name: str, input_shape: tuple, num_classes: int=None, checkpoint: 
     _ = mvt.nn.utils.fake_forward_pass(model, input_shape)
 
     if checkpoint is not None:
-        model = load_model_weights(model, checkpoint)
+        model = load_model_weights(model, checkpoint, strict)
 
     return model
 
 
-def load_model_weights(model: torch.nn.Module, checkpoint: str) -> torch.nn.Module:
+def load_model_weights(model: torch.nn.Module, checkpoint: str, strict: bool=False) -> torch.nn.Module:
     """
     Load the weights of a model from a checkpoint.
-    The function loads only the common sets of parameters.
 
     Parameters
     ----------
     `model` (torch.nn.Module): model instance
     `checkpoint` (str): path to the checkpoint file
+    `strict` (bool): whether to strictly enforce that the keys in `state_dict` match the keys returned by this module's `state_dict`
 
     Return
     ------
@@ -69,7 +69,10 @@ def load_model_weights(model: torch.nn.Module, checkpoint: str) -> torch.nn.Modu
     target_state_dict = model.state_dict()
     common_state_dict = mvt.utils.intersect_dicts(source_state_dict, target_state_dict)
 
-    model.load_state_dict(common_state_dict, strict=False)
+    if strict:
+        assert len(common_state_dict) == len(target_state_dict), "Error: The number of parameters in the checkpoint does not match the number of parameters in the model. Try setting `strict=False`."
+
+    model.load_state_dict(common_state_dict, strict=strict)
     print(f"Loaded {len(common_state_dict)}/{len(target_state_dict)} sets of parameters from checkpoint.")
 
     return model

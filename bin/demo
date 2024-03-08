@@ -1,0 +1,148 @@
+#!/usr/bin/env -S python -B
+
+import argparse, os, glob
+
+import cv2, torch
+import torch.utils.data
+import torchinfo
+
+import mvt.utils
+import mvt.datasets
+import mvt.nn.models
+
+
+class InputStream(object):
+
+    def __init__(self, source: str) -> None:
+        """
+        Initialize input stream from a camera index, video file, directory of images or single image.
+
+        Parameters
+        ----------
+        `source` (str): Camera index, video file, directory of images or single image.
+        """
+        self.counter = 0
+        self.video = None
+        self.image_paths = None
+        self.img = None
+
+        if source.isdigit():
+            self.video = cv2.VideoCapture(int(source))
+            assert self.video.isOpened(), "Cannot open video stream"
+        else:
+            assert os.path.exists(source), f"Invalid input path. No such file or directory: {source}"
+            regex = os.path.join(source, "*")
+            self.image_paths = sorted(glob.glob(regex))
+            assert len(self.image_paths) > 0, f"No images found in directory: {source}"
+
+    def __del__(self):
+        """Destructor to make sure video stream is released when object is deleted"""
+        if self.video is not None:
+            self.video.release()
+
+    def get(self):
+        """Get a frame from the input stream.
+        If the source is a video, the frame is read from the video stream.
+        If the source is a directory of images, the frames are read from the images in the directory.
+        If the source is a single image, the frame is read from the image.
+        If the source is a camera index, the frame is read from the camera.
+        If the source is invalid, None is returned.
+        """
+
+        frame = None
+
+        if self.video is not None:
+            _, frame = self.video.read()
+            if frame is not None:
+                frame = cv2.flip(frame, 1)
+        else:
+            if self.counter < len(self.image_paths):
+                fpath = self.image_paths[self.counter]
+                frame = cv2.imread(fpath, -1)
+                self.counter += 1
+
+        return frame
+
+
+def main(args):
+
+    # aux variables
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
+    input_shape = mvt.utils.string_to_shape(args.input_shape)
+
+    # ===================
+    # prepare data stream
+    # ===================
+
+    def transform(image, label, target_shape=input_shape[1:]):
+        image = cv2.resize(image, target_shape)
+        image = (image / 255 - 0.5).astype("float32")
+        image = image.transpose(2, 0, 1)
+        return image, label
+
+    input_stream = InputStream(args.input)
+
+    assert os.path.exists(args.class_names), f"Invalid class names file. No such file: {args.class_names}"
+    with open(args.class_names, "r") as f:
+        class_names = f.readlines()
+        class_names = [name.strip() for name in class_names]
+
+    num_classes = len(class_names)
+
+    # ============
+    # create model
+    # ============
+
+    model = mvt.nn.models.get_model(args.model_name, input_shape, num_classes, args.checkpoint, strict=True)
+    model = model.to(device)
+
+    torchinfo.summary(model, input_size=(1, *input_shape))
+
+    # ================
+    # start validation
+    # ================
+
+    model.eval()
+    with torch.no_grad():
+        while True:
+
+            image_orig = input_stream.get()
+            if image_orig is None:
+                break
+
+            # prepare data
+            image = transform(image_orig, None)[0]
+            image = torch.from_numpy(image).unsqueeze(0).to(device)
+
+            # forward pass
+            output = model(image)
+
+            # print results
+            if args.task == "classification":
+                _, predicted = torch.max(output, 1)
+                class_id = predicted.item()
+                print(f"Predicted: {class_id} {class_names[class_id]}")
+
+            # show image
+            cv2.imshow("Frame", image_orig)
+            if cv2.waitKey(1) & 255 in [27, ord("q")]:
+                break
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    # input stream
+    parser.add_argument("--input",        type=str,   required=True)
+    # model
+    parser.add_argument("--model_name",   type=str,   default="resnet18")
+    parser.add_argument("--input_shape",  type=str,   default="3x32x32")
+    parser.add_argument("--class_names",  type=str,   default="cfg/class_names/cifar10.txt")
+    parser.add_argument("--checkpoint",   type=str,   required=True)
+    # misc
+    parser.add_argument("--task",         type=str,   default="classification", choices=["classification", "detection"])
+    parser.add_argument("--device",       type=str,   default="auto", choices=["cpu", "cuda", "auto"])
+
+    args = parser.parse_args()
+
+    main(args)
