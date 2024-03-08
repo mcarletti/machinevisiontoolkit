@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python -B
 
-import argparse, os
+import argparse, os, pickle
 
 import cv2, tqdm, torch
 import torch.utils.data
@@ -16,6 +16,8 @@ import mvt.nn.callbacks
 
 
 def main(args):
+
+    mvt.utils.set_reproducibility(args.seed, {}, False)
 
     # aux variables
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
@@ -138,16 +140,28 @@ def main(args):
         # save
         # ----
 
+        # create output folder
         os.makedirs(args.output, exist_ok=True)
 
+        # tensorboard logs
         logger_cb(logs, epoch)
 
+        # save last model
         torch.save(model.state_dict(), os.path.join(args.output, "last.pt"))
 
+        # save last rng state
+        rng_state = mvt.utils.get_rng_state()
+        with open(os.path.join(args.output, "last_rng_state.pickle"), "wb") as f:
+            pickle.dump(rng_state, f)
+
+        # save best model and best rng state
         if metric >= best_metric:
             best_metric = metric
             torch.save(model.state_dict(), os.path.join(args.output, "best.pt"))
             print("Model saved at epoch {}".format(epoch + 1))
+
+            with open(os.path.join(args.output, "best_rng_state.pickle"), "wb") as f:
+                pickle.dump(rng_state, f)
 
 
 if __name__ == "__main__":
@@ -169,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr",           type=float, default=1e-2)
     parser.add_argument("--output",       type=str,   required=True)
     # misc
+    parser.add_argument("--seed",         type=int,   default=0)
     parser.add_argument("--workers",      type=int,   default=2)
     parser.add_argument("--device",       type=str,   default="auto", choices=["cpu", "cuda", "auto"])
 

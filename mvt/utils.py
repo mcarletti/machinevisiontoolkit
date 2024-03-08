@@ -1,8 +1,10 @@
 from argparse import Namespace
 from collections.abc import Iterable
-import os
+import os, random
 
 import cv2, yaml, numpy as np
+import torch
+from torch.backends import cudnn
 
 
 def string_to_shape(s: str) -> tuple:
@@ -151,3 +153,88 @@ def show_image(image: np.ndarray, window_name: str="Image", delay: int=0) -> Non
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR) if len(image.shape) == 3 else image
     cv2.imshow(window_name, image)
     cv2.waitKey(delay)
+
+
+def set_seed(seed: int) -> None:
+    """
+    Set the random seed for reproducibility.
+
+    Parameters
+    ----------
+    `seed` (int): random seed
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def get_rng_state() -> dict:
+    """
+    Get the state of the random number generators.
+
+    Return
+    ------
+    dict: state of the random number generators
+    """
+    return {
+        "random": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+        "cuda": torch.cuda.get_rng_state_all(),
+        "hash": os.environ["PYTHONHASHSEED"],
+    }
+
+
+def set_rng_state(state: dict) -> None:
+    """
+    Set the state of the random number generators.
+
+    Parameters
+    ----------
+    `state` (dict): state of the random number generators
+    """
+    if not all(k in state for k in ["random", "numpy", "torch", "cuda", "hash"]):
+        print("Invalid random generators state dictionary. It must contain the keys 'random', 'numpy', 'torch', 'cuda', and 'hash'")
+        return
+
+    random.setstate(state["random"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    torch.cuda.set_rng_state_all(state["cuda"])
+    os.environ["PYTHONHASHSEED"] = state["hash"]
+
+
+def set_reproducibility(seed: int, rng_state: dict={}, gpu_determinism: bool=False) -> None:
+    """
+    Enable reproducibility on operations related to tensor and randomness.
+
+    Parameters
+    ----------
+    `seed` (int): random seed
+    `deterministic` (bool): enable deterministic operations
+    `rng_state` (dict): state of the random number generators
+
+    References
+    ----------
+    https://numpy.org/doc/stable/reference/random/generator.html
+    https://github.com/ultralytics/yolov5/pull/8213
+    https://discuss.pytorch.org/t/reproducibility-over-multigpus-is-impossible-until-randomness-of-threads-is-controled-and-yet/47079
+    https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility
+    """
+
+    set_seed(seed)
+    set_rng_state(rng_state)
+
+    # let or prevent cudnn to autonomously select the underlying algorithm according to the operation
+    cudnn.benchmark = not gpu_determinism
+
+    # ask pytorch to use deterministic algorithms, if available;
+    # raise an error if a nondeterministic operation is called
+    torch.use_deterministic_algorithms(gpu_determinism)
+    cudnn.deterministic = gpu_determinism
+
+    # set a debug environment variable
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
