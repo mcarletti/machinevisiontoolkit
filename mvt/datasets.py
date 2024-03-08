@@ -1,0 +1,311 @@
+from abc import ABC, abstractmethod
+import os
+
+import cv2, json, torch, tqdm, numpy as np
+
+
+def get_dataset(name: str, root: str, split: str, task: str, transform: callable=None) -> torch.utils.data.Dataset:
+    """
+    Get a dataset from the dataset zoo.
+
+    Parameters
+    ----------
+    `name` (str): name of the dataset
+    `root` (str): path to the dataset root directory
+    `split` (str): split of the dataset (train, val)
+    `task` (str): task to perform (classification, detection)
+    `transform` (callable): transformation function to apply to the samples
+
+    Return
+    ------
+    torch.utils.data.Dataset: dataset object
+    """
+
+    DATA_ZOO = {
+        "cifar10":  (CIFAR,  {"num_classes":  10}),
+        "cifar100": (CIFAR,  {"num_classes": 100}),
+        "imagenet": (ILSVRC, {}),
+        "coco":     (COCO,   {}),
+    }
+
+    assert name in DATA_ZOO, f"Invalid dataset name: {name}"
+
+    dataset_class, kwargs = DATA_ZOO.get(name)
+
+    return dataset_class(root, split, task, transform=transform, **kwargs)
+
+
+class _Dataset(ABC, torch.utils.data.Dataset):
+
+    def __init__(self, transform: callable=None, *args, **kwargs) -> None:
+        """
+        Initialize the abstract class dataset.
+
+        Parameters
+        ----------
+        `*args`: positional arguments
+        `**kwargs`: keyword arguments
+        """
+        super(_Dataset, self).__init__(*args, **kwargs)
+        self.transform = transform
+
+    def __len__(self) -> int:
+        """Return the number of samples in the dataset."""
+        return len(self.data)
+
+    def __getitem__(self, index: int) -> tuple:
+        """
+        Return a sample from the dataset.
+
+        Parameters
+        ----------
+        `index` (int): index of the sample
+
+        Return
+        ------
+        tuple: sample as a tuple of (samples, labels)
+        """
+        assert index < len(self.data), f"Index out of range: {index}"
+
+        sample = self._load_sample(index)
+        labels = self._load_labels(index)
+
+        if self.transform is not None:
+            sample, labels = self.transform(sample, labels)
+
+        return sample, labels
+
+    @abstractmethod
+    def _load_sample(self, index) -> np.ndarray:
+        """
+        Load a sample from the dataset.
+
+        Parameters
+        ----------
+        `index` (int): index of the sample
+
+        Return
+        ------
+        np.ndarray: sample as a numpy array
+        """
+        pass
+
+    @abstractmethod
+    def _load_labels(self, index: int) -> None:
+        """
+        Load labels for a sample from the dataset.
+
+        Parameters
+        ----------
+        `index` (int): index of the sample
+
+        Return
+        ------
+        int: dataset specific label for the sample
+        """
+        pass
+
+    @staticmethod
+    def collate_fn(batch: list) -> tuple:
+        """
+        Collate a batch of samples. This method is used by the dataloader.
+
+        Parameters
+        ----------
+        `batch` (list): list of samples
+
+        Return
+        ------
+        tuple: batch as a tuple of stacked tensors (samples, labels)"""
+        samples, labels = zip(*batch)
+        return torch.stack(samples, 0), torch.stack(labels, 0)
+
+
+class CIFAR(_Dataset):
+
+    def __init__(self, root: str, split: str, task: str="classification", transform: callable=None, *args, **kwargs) -> None:
+        """
+        Initialize the CIFAR dataset.
+
+        Parameters
+        ----------
+        `root` (str): path to the dataset root directory
+        `split` (str): split of the dataset (train, val)
+        `task` (str): task to perform (classification)
+        `transform` (callable): transformation function to apply to the samples
+        """
+        self.num_classes = kwargs.pop("num_classes", None)
+        assert self.num_classes is not None, "Number of classes not provided for CIFAR dataset"
+        assert self.num_classes in [10, 100], "Invalid number of classes for CIFAR dataset. Choose 10 or 100."
+        super(CIFAR, self).__init__(transform=transform, *args, **kwargs)
+
+        assert os.path.exists(root), f"Dataset directory not found: {root}"
+        assert split in ["train", "val"], f"Invalid split: {split}"
+        assert task in ["classification"], "CIFAR dataset currently supports only 'classification' task"
+
+        def _unpickle(file):
+            import pickle
+            with open(file, "rb") as fo:
+                dict = pickle.load(fo, encoding="bytes")
+            return dict
+
+        if self.num_classes == 10:
+            if split == "train":
+                for i in range(1, 6):
+                    file_path = os.path.join(root, "cifar", "cifar-10-batches-py", f"data_batch_{i}")
+                    file_data = _unpickle(file_path)
+                    if i == 1:
+                        self.data = file_data[b"data"]
+                        self.labels = file_data[b"labels"]
+                    else:
+                        self.data = np.vstack((self.data, file_data[b"data"]))
+                        self.labels += file_data[b"labels"]
+            else:
+                file_path = os.path.join(root, "cifar", "cifar-10-batches-py", "test_batch")
+                file_data = _unpickle(file_path)
+                self.data = file_data[b"data"]
+                self.labels = file_data[b"labels"]
+        elif self.num_classes == 100:
+            split = "train" if split == "train" else "test"
+            file_path = os.path.join(root, "cifar", "cifar-100-python", f"{split}")
+            file_data = _unpickle(file_path)
+            self.data = file_data[b"data"]
+            self.labels = file_data[b"fine_labels"]
+
+        self.data = self.data.reshape(-1, 3, 32, 32)
+        self.data = self.data.transpose((0, 2, 3, 1))
+
+    def _load_sample(self, index: int) -> np.ndarray:
+        return self.data[index]
+
+    def _load_labels(self, index: int) -> int:
+        return self.labels[index]
+
+
+class COCO(_Dataset):
+
+    def __init__(self, root: str, split: str, task: str="detection", transform: callable=None, *args, **kwargs):
+        """
+        Initialize the COCO dataset.
+        
+        Parameters
+        ----------
+        `root` (str): path to the dataset root directory
+        `split` (str): split of the dataset (train, val)
+        `task` (str): task to perform (detection, classification)
+        `transform` (callable): transformation function to apply to the samples
+        """
+        super(COCO, self).__init__(transform=transform, *args, **kwargs)
+
+        # sanity checks
+        assert os.path.exists(root), f"Dataset directory not found: {root}"
+        assert split in ["train", "val"], f"Invalid split: {split}"
+        assert task=="detection", "COCO dataset currently supports only 'detection' task"
+
+        file_path = os.path.join(root, "coco", "annotations", f"instances_{split}2017.json")
+        print(f"Loading COCO annotations: {file_path}")
+        file_data = json.load(open(file_path, "r"))
+
+        self.data = [None] * len(file_data["images"])
+        class_ids = set()
+        counter = 0
+
+        print("Parsing COCO annotations")
+        for img_data in tqdm.tqdm(file_data["images"]):
+            image_path = os.path.join(root, "coco", "images", f"{split}2017", img_data["file_name"])
+            boxes = ()
+            for ann_data in file_data["annotations"]:
+                if ann_data["image_id"] == img_data["id"]:
+                    x, y, w, h = [int(v) for v in ann_data["bbox"]]
+                    cls = int(ann_data["category_id"])
+                    boxes += ([x, y, x+w, y+h, cls],)
+                    class_ids.add(cls)
+            self.data[counter] = [image_path, boxes]
+            counter += 1
+
+        self.num_classes = len(class_ids)
+
+    def _load_sample(self, index: int) -> np.ndarray:
+        sample = cv2.imread(self.data[index][0], -1)
+        if len(sample.shape) == 2: sample = np.stack([sample] * 3, -1)
+        sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB)
+        return sample
+
+    def _load_labels(self, index: int) -> int:
+        labels = self.data[index][1]
+        return labels
+
+
+class ILSVRC(_Dataset):
+
+    def __init__(self, root: str, split: str, task: str="detection", transform: callable=None, *args, **kwargs):
+        """
+        Initialize the ILSVRC dataset.
+        
+        Parameters
+        ----------
+        `root` (str): path to the dataset root directory
+        `split` (str): split of the dataset (train, val)
+        `task` (str): task to perform (detection, classification)
+        `transform` (callable): transformation function to apply to the samples
+        """
+        super(ILSVRC, self).__init__(transform=transform, *args, **kwargs)
+
+        assert os.path.exists(root), f"Dataset directory not found: {root}"
+        assert split in ["train", "val"], f"Invalid split: {split}"
+        assert task in ["classification", "detection"] , "ILSVRC dataset currently supports only 'classification' and 'detection' tasks"
+
+        file_path = os.path.join(root, "ILSVRC", "LOC_synset_mapping.txt")
+        print(f"Loading ILSVRC synset mapping: {file_path}")
+        with open(file_path, "r") as fp:
+            file_data = fp.readlines()
+
+        synset_to_class_id = {}
+        counter = 0
+
+        for line in tqdm.tqdm(file_data):
+            synset = line.split()[0]
+            synset_to_class_id.update({synset: counter})
+            counter += 1
+
+        self.num_classes = len(synset_to_class_id)
+
+        file_path = os.path.join(root, "ILSVRC", f"LOC_{split}_solution.csv")
+        print(f"Loading ILSVRC annotations: {file_path}")
+        with open(file_path, "r") as fp:
+            file_data = fp.readlines()[1:]
+
+        self.data = [None] * len(file_data)
+        counter = 0
+
+        print("Parsing ILSVRC annotations")
+        for line in tqdm.tqdm(file_data):
+            image_name, annotations = line.split(",")
+            class_dir = image_name.split("_")[0] if split == "train" else ""
+            image_path = os.path.join(root, "ILSVRC", "Data", "CLS-LOC", split, class_dir, image_name + ".JPEG")
+            annotations = annotations.split()
+
+            if task == "detection":
+                boxes = ()
+                for i in range(len(annotations) // 5):
+                    synset = annotations[i*5]
+                    cls = synset_to_class_id[synset]
+                    x0, y0, x1, y1 = [int(v) for v in annotations[i*5+1:i*5+5]]
+                    boxes += ([x0, y0, x1, y1, cls],)
+                self.data[counter] = [image_path, boxes]
+            elif task == "classification":
+                synset = annotations[0]
+                cls = synset_to_class_id[synset]
+                self.data[counter] = [image_path, cls]
+
+            counter += 1
+
+    def _load_sample(self, index: int) -> np.ndarray:
+        sample = cv2.imread(self.data[index][0], -1)
+        if len(sample.shape) == 2: sample = np.stack([sample] * 3, -1)
+        sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB)
+        return sample
+
+    def _load_labels(self, index: int) -> int:
+        labels = self.data[index][1]
+        return labels

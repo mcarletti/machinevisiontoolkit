@@ -1,0 +1,91 @@
+#!/usr/bin/env -S python -B
+
+import argparse
+
+import cv2, tqdm, torch
+import torch.utils.data
+import torchinfo
+
+import mvt.utils
+import mvt.metrics
+import mvt.datasets
+import mvt.nn.models
+
+
+def main(args):
+
+    # aux variables
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
+    input_shape = mvt.utils.string_to_shape(args.input_shape)
+
+    # ===============
+    # create datasets
+    # ===============
+
+    def transform(image, label, target_shape=input_shape[1:]):
+        image = cv2.resize(image, target_shape)
+        image = (image / 255 - 0.5).astype("float32")
+        image = image.transpose(2, 0, 1)
+        return image, label
+
+    dataset_val = mvt.datasets.get_dataset(args.dataset_name, args.dataset_root, "val", args.dataset_task, transform)
+
+    print(f"Val dataset: {len(dataset_val)} samples")
+
+    assert hasattr(dataset_val, "num_classes"), "Dataset must have an attribute 'num_classes'"
+    num_classes = dataset_val.num_classes
+
+    # create dataloaders
+    dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+    # ============
+    # create model
+    # ============
+
+    model = mvt.nn.models.get_model(args.model_name, input_shape, num_classes, args.checkpoint)
+    model = model.to(device)
+
+    torchinfo.summary(model, input_size=(1, *input_shape))
+
+    # ================
+    # start validation
+    # ================
+
+    # aux variables
+    metric_fn = mvt.metrics.accuracy_from_logits if args.dataset_task == "classification" else None
+    metric = 0
+
+    model.eval()
+    with torch.no_grad():
+        for images, labels in tqdm.tqdm(dataloader_val):
+            # prepare data
+            images = images.to(device)
+            labels = labels.to(device)
+            # forward pass
+            outputs = model(images)
+            # compute metrics
+            metric += metric_fn(outputs, labels) / len(dataloader_val)
+
+        print("Val metric:   {:.4f}".format(metric))
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    # model
+    parser.add_argument("--model_name",   type=str,   default="resnet18")
+    parser.add_argument("--input_shape",  type=str,   default="3x32x32")
+    parser.add_argument("--checkpoint",   type=str,   required=True)
+    # dataset
+    parser.add_argument("--dataset_root", type=str,   default="datasets")
+    parser.add_argument("--dataset_name", type=str,   default="cifar10")
+    parser.add_argument("--dataset_task", type=str,   default="classification", choices=["classification", "detection"])
+    # validation
+    parser.add_argument("--batch_size",   type=int,   default=128)
+    # misc
+    parser.add_argument("--workers",      type=int,   default=2)
+    parser.add_argument("--device",       type=str,   default="auto", choices=["cpu", "cuda", "auto"])
+
+    args = parser.parse_args()
+
+    main(args)
