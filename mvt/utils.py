@@ -226,7 +226,9 @@ def set_reproducibility(seed: int, rng_state: dict={}, gpu_determinism: bool=Fal
     """
 
     set_seed(seed)
-    set_rng_state(rng_state)
+
+    if rng_state:
+        set_rng_state(rng_state)
 
     # let or prevent cudnn to autonomously select the underlying algorithm according to the operation
     cudnn.benchmark = not gpu_determinism
@@ -238,3 +240,70 @@ def set_reproducibility(seed: int, rng_state: dict={}, gpu_determinism: bool=Fal
 
     # set a debug environment variable
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+
+def setup_for_distributed(is_master):
+    """
+    This function disables printing when not in master process
+    """
+    import builtins as __builtin__
+    builtin_print = __builtin__.print
+
+    def print(*args, **kwargs):
+        force = kwargs.pop("force", False)
+        if is_master or force:
+            builtin_print(*args, **kwargs)
+
+    __builtin__.print = print
+
+
+def is_dist_avail_and_initialized():
+    if not torch.distributed.is_available():
+        return False
+    if not torch.distributed.is_initialized():
+        return False
+    return True
+
+
+def get_world_size():
+    if not is_dist_avail_and_initialized():
+        return 1
+    return torch.distributed.get_world_size()
+
+
+def get_rank():
+    if not is_dist_avail_and_initialized():
+        return 0
+    return torch.distributed.get_rank()
+
+
+def is_main_process():
+    return get_rank() == 0
+
+
+def init_distributed_mode(args):
+
+    distributed = False
+    world_size = 0
+    rank_global = -1
+    rank_local = -1
+
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        devices = os.environ["CUDA_VISIBLE_DEVICES"]
+
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        world_size = int(os.environ["WORLD_SIZE"])
+        rank_global = int(os.environ["RANK"])
+        rank_local = int(os.environ["LOCAL_RANK"])
+    else:
+        print("Not using distributed mode")
+        return distributed, world_size, rank_global, rank_local
+
+    distributed = True
+
+    torch.cuda.device(devices)
+    torch.distributed.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank_global)
+    torch.distributed.barrier()
+    setup_for_distributed(rank_global == 0)
+
+    return distributed, world_size, rank_global, rank_local

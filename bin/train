@@ -17,10 +17,14 @@ import mvt.nn.callbacks
 
 def main(args):
 
-    mvt.utils.set_reproducibility(args.seed, {}, False)
+    distributed, world_size, rank_global, rank_local = mvt.utils.init_distributed_mode(args)
+    mvt.utils.set_reproducibility(args.seed + mvt.utils.get_rank(), {}, False)
 
     # aux variables
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
+    if distributed:
+        device = torch.device("cuda", rank_local)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
     input_shape = mvt.utils.string_to_shape(args.input_shape)
 
     # ===============
@@ -36,6 +40,12 @@ def main(args):
     dataset_train = mvt.datasets.get_dataset(args.dataset_name, args.dataset_root, "train", args.dataset_task, transform)
     dataset_val = mvt.datasets.get_dataset(args.dataset_name, args.dataset_root, "val", args.dataset_task, transform)
 
+    sampler_train = None
+    sampler_val = None
+    if distributed:
+        sampler_train = torch.utils.data.DistributedSampler(dataset_train, num_replicas=world_size, rank=rank_global, shuffle=True, seed=args.seed)
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)  # validation set is not distributed
+
     print(f"Train dataset: {len(dataset_train)} samples")
     print(f"Val dataset: {len(dataset_val)} samples")
 
@@ -44,8 +54,8 @@ def main(args):
     num_classes = dataset_train.num_classes
 
     # create dataloaders
-    dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, sampler=sampler_train)
+    dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, sampler=sampler_val)
 
     # ============
     # create model
@@ -55,6 +65,9 @@ def main(args):
     model = model.to(device)
 
     torchinfo.summary(model, input_size=(1, *input_shape))
+
+    if distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank_global])
 
     # =============
     # prepare train
@@ -86,6 +99,9 @@ def main(args):
         # aux variables
         metric = 0
         logs = {}
+
+        if distributed:
+            dataloader_train.sampler.set_epoch(epoch)
 
         model.train()
         for images, labels in tqdm.tqdm(dataloader_train):
@@ -162,6 +178,9 @@ def main(args):
 
             with open(os.path.join(args.output, "best_rng_state.pickle"), "wb") as f:
                 pickle.dump(rng_state, f)
+
+    if distributed:
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
