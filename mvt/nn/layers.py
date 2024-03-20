@@ -21,7 +21,7 @@ class _Layer(ABC, torch.nn.Module):
 
 class Conv(_Layer):
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int=1, padding: int=0, groups: int=1, bias: bool=True, dilation: int=1, batch_norm: bool=True, activation: str="relu") -> None:
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int=1, padding: int=0, groups: int=1, bias: bool=False, dilation: int=1, batch_norm: bool=True, activation: str="relu") -> None:
         """
         Convolutional layer with optional batch normalization and activation function.
         
@@ -147,11 +147,12 @@ class Concat(_Layer):
         return torch.concat(x)
 
 
-class ResBlock(_Layer):
+class ResBlockBasic(_Layer):
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int=1, padding: int=1, groups: int=1, bias: bool=True, dilation: int=1, batch_norm=True, activation: str="relu") -> None:
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int=1, padding: int=1, groups: int=1, bias: bool=False, dilation: int=1, batch_norm=True, activation: str="relu") -> None:
         """
-        Residual block with two convolutional layers and optional batch normalization and activation function.
+        Basic residual block as implemented in PyTorch.
+        https://towardsdev.com/implement-resnet-with-pytorch-a9fb40a77448
 
         Parameters
         ----------
@@ -170,14 +171,20 @@ class ResBlock(_Layer):
         self.conv1 = Conv( in_channels, out_channels, kernel_size, stride, padding, groups, bias, dilation, batch_norm, activation)
         self.conv2 = Conv(out_channels, out_channels, kernel_size, stride, padding, groups, bias, dilation, batch_norm, activation)
 
-        if in_channels != out_channels:
-            self.residual = Conv( in_channels, out_channels, kernel_size, stride, padding, groups, bias, dilation, batch_norm, activation)
+        if in_channels != out_channels or stride != 1:
+            self.shortcut = Conv( in_channels, out_channels, 1, stride, 0, groups, bias, dilation, batch_norm, None)
         else:
-            self.residual = mvt.nn.activations.get_activation(activation, inplace=False)
+            self.shortcut = torch.nn.Sequential()
+
+        self.add = Add()
+        self.act = mvt.nn.activations.get_activation(activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.conv1(x)
-        return self.conv2(h) + self.residual(x)
+        h = self.conv2(h)
+        s = self.shortcut(x)
+        a = self.add(h, s)
+        return self.act(a)
 
 
 class C3(_Layer):

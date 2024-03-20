@@ -18,7 +18,7 @@ def get_activation(name: str=None, inplace: bool=True, **kwargs) -> torch.nn.Mod
     """
 
     if name is None:
-        return lambda x: x
+        return torch.nn.Sequential()
 
     ACTIVATION_ZOO = {
         "sigmoid":    (torch.nn.Sigmoid,     {}),

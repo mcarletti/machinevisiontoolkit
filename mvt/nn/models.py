@@ -146,14 +146,14 @@ class ResNet18(torch.nn.Module):
         self.features = torch.nn.Sequential(
             mvt.nn.layers.Conv(input_shape[0], 64, kernel_size=7, stride=2, padding=3, batch_norm=use_bn, activation=act_fn),
             mvt.nn.layers.MaxPool(kernel_size=3, stride=2),
-            mvt.nn.layers.ResBlock( 64,  64, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock( 64,  64, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock( 64, 128, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock(128, 128, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock(128, 256, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock(256, 256, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock(256, 512, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlock(512, 512, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic( 64,  64, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic( 64,  64, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic( 64, 128, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic(128, 128, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic(128, 256, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic(256, 256, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic(256, 512, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
+            mvt.nn.layers.ResBlockBasic(512, 512, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
             mvt.nn.layers.GlobalAvgPool(),
         )
 
