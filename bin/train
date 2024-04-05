@@ -17,10 +17,9 @@ import mvt.nn.callbacks
 
 def main(args):
 
-    mvt.utils.set_reproducibility(args.seed, {}, False)
+    distributed, world_size, rank_global, rank_local, device = mvt.utils.init_distributed_mode(args.device)
+    mvt.utils.set_reproducibility(args.seed + rank_global, {}, False)
 
-    # aux variables
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
     input_shape = mvt.utils.string_to_shape(args.input_shape)
 
     # ===============
@@ -36,6 +35,12 @@ def main(args):
     dataset_train = mvt.datasets.get_dataset(args.dataset_name, args.dataset_root, "train", args.dataset_task, transform)
     dataset_val = mvt.datasets.get_dataset(args.dataset_name, args.dataset_root, "val", args.dataset_task, transform)
 
+    sampler_train = None
+    sampler_val = None
+    if distributed:
+        sampler_train = torch.utils.data.DistributedSampler(dataset_train, num_replicas=world_size, rank=rank_global, shuffle=True, seed=args.seed)
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)  # validation set is not distributed
+
     print(f"Train dataset: {len(dataset_train)} samples")
     print(f"Val dataset: {len(dataset_val)} samples")
 
@@ -44,8 +49,8 @@ def main(args):
     num_classes = dataset_train.num_classes
 
     # create dataloaders
-    dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=(sampler_train is None), num_workers=args.workers, sampler=sampler_train)
+    dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, sampler=sampler_val)
 
     # ============
     # create model
@@ -54,7 +59,10 @@ def main(args):
     model = mvt.nn.models.get_model(args.model_name, input_shape, num_classes, args.checkpoint)
     model = model.to(device)
 
-    torchinfo.summary(model, input_size=(1, *input_shape))
+    torchinfo.summary(model, input_size=(1, *input_shape), device=device)
+
+    if distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank_global])
 
     # =============
     # prepare train
@@ -87,8 +95,12 @@ def main(args):
         metric = 0
         logs = {}
 
+        iterator = tqdm.tqdm if rank_global == 0 else (lambda x: x)
+        if distributed:
+            dataloader_train.sampler.set_epoch(epoch)
+
         model.train()
-        for images, labels in tqdm.tqdm(dataloader_train):
+        for images, labels in iterator(dataloader_train):
             # prepare data
             images = images.to(device)
             labels = labels.to(device)
@@ -114,54 +126,59 @@ def main(args):
         # validation step
         # ---------------
 
-        # aux variables
-        metric = 0
+        if rank_global == 0:
 
-        model.eval()
-        with torch.no_grad():
-            for images, labels in dataloader_val:
-                # prepare data
-                images = images.to(device)
-                labels = labels.to(device)
-                # forward pass
-                outputs = model(images)
-                # compute loss
-                loss = loss_fn(outputs, labels)
-                # compute metrics
-                metric += metric_fn(outputs, labels) / len(dataloader_val)
+            # aux variables
+            metric = 0
 
-            print("Val metric:   {:.4f}".format(metric))
+            model.eval()
+            with torch.no_grad():
+                for images, labels in dataloader_val:
+                    # prepare data
+                    images = images.to(device)
+                    labels = labels.to(device)
+                    # forward pass
+                    outputs = model(images)
+                    # compute loss
+                    loss = loss_fn(outputs, labels)
+                    # compute metrics
+                    metric += metric_fn(outputs, labels) / len(dataloader_val)
 
-        # update logs
-        logs.update({"val/loss": loss.to("cpu").item()})
-        logs.update({"val/metric": metric})
+                print("Val metric:   {:.4f}".format(metric))
 
-        # ----
-        # save
-        # ----
+            # update logs
+            logs.update({"val/loss": loss.to("cpu").item()})
+            logs.update({"val/metric": metric})
 
-        # create output folder
-        os.makedirs(args.output, exist_ok=True)
+            # ----
+            # save
+            # ----
 
-        # tensorboard logs
-        logger_cb(logs, epoch)
+            # create output folder
+            os.makedirs(args.output, exist_ok=True)
 
-        # save last model
-        torch.save(model.state_dict(), os.path.join(args.output, "last.pt"))
+            # tensorboard logs
+            logger_cb(logs, epoch)
 
-        # save last rng state
-        rng_state = mvt.utils.get_rng_state()
-        with open(os.path.join(args.output, "last_rng_state.pickle"), "wb") as f:
-            pickle.dump(rng_state, f)
+            # save last model
+            torch.save(model.state_dict(), os.path.join(args.output, "last.pt"))
 
-        # save best model and best rng state
-        if metric >= best_metric:
-            best_metric = metric
-            torch.save(model.state_dict(), os.path.join(args.output, "best.pt"))
-            print("Model saved at epoch {}".format(epoch + 1))
-
-            with open(os.path.join(args.output, "best_rng_state.pickle"), "wb") as f:
+            # save last rng state
+            rng_state = mvt.utils.get_rng_state()
+            with open(os.path.join(args.output, "last_rng_state.pickle"), "wb") as f:
                 pickle.dump(rng_state, f)
+
+            # save best model and best rng state
+            if metric >= best_metric:
+                best_metric = metric
+                torch.save(model.state_dict(), os.path.join(args.output, "best.pt"))
+                print("Model saved at epoch {}".format(epoch + 1))
+
+                with open(os.path.join(args.output, "best_rng_state.pickle"), "wb") as f:
+                    pickle.dump(rng_state, f)
+
+    if distributed:
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

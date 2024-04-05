@@ -226,7 +226,9 @@ def set_reproducibility(seed: int, rng_state: dict={}, gpu_determinism: bool=Fal
     """
 
     set_seed(seed)
-    set_rng_state(rng_state)
+
+    if rng_state:
+        set_rng_state(rng_state)
 
     # let or prevent cudnn to autonomously select the underlying algorithm according to the operation
     cudnn.benchmark = not gpu_determinism
@@ -238,3 +240,43 @@ def set_reproducibility(seed: int, rng_state: dict={}, gpu_determinism: bool=Fal
 
     # set a debug environment variable
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+
+def setup_for_distributed(is_master):
+    """
+    This function disables printing when not in master process
+    """
+    import builtins as __builtin__
+    builtin_print = __builtin__.print
+
+    def print(*args, **kwargs):
+        force = kwargs.pop("force", False)
+        if is_master or force:
+            builtin_print(*args, **kwargs)
+
+    __builtin__.print = print
+
+
+def init_distributed_mode(target_device):
+
+    if target_device == "cpu" or (target_device == "auto" and torch.cuda.is_available() is False):
+        print("Using CPU")
+        return False, 0, 0, 0, torch.device("cpu")
+
+    if "LOCAL_RANK" not in os.environ:
+        print("Not using distributed mode because 'torchrun' is not used. Using single GPU.")
+        return False, 1, 0, 0, torch.device("cuda")
+
+    if not torch.distributed.is_available():
+        print("Not using distributed mode because 'torch.distributed' is not available. Using single GPU.")
+        return False, 1, 0, 0, torch.device("cuda")
+
+    torch.distributed.init_process_group(backend="nccl")
+    world_size = torch.distributed.get_world_size()  # number of GPUs on all machines
+    rank_global = torch.distributed.get_rank()  # unique id for each GPU
+    rank_local = rank_global % torch.cuda.device_count()  # id for each GPU on the current machine
+
+    torch.distributed.barrier()
+    setup_for_distributed(rank_global == 0)
+
+    return True, world_size, rank_global, rank_local, torch.device("cuda", rank_local)
