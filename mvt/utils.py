@@ -257,53 +257,26 @@ def setup_for_distributed(is_master):
     __builtin__.print = print
 
 
-def is_dist_avail_and_initialized():
+def init_distributed_mode(target_device):
+
+    if target_device == "cpu" or (target_device == "auto" and torch.cuda.is_available() is False):
+        print("Using CPU")
+        return False, 0, 0, 0, torch.device("cpu")
+
+    if "LOCAL_RANK" not in os.environ:
+        print("Not using distributed mode because 'torchrun' is not used. Using single GPU.")
+        return False, 1, 0, 0, torch.device("cuda")
+
     if not torch.distributed.is_available():
-        return False
-    if not torch.distributed.is_initialized():
-        return False
-    return True
+        print("Not using distributed mode because 'torch.distributed' is not available. Using single GPU.")
+        return False, 1, 0, 0, torch.device("cuda")
 
+    torch.distributed.init_process_group(backend="nccl")
+    world_size = torch.distributed.get_world_size()  # number of GPUs on all machines
+    rank_global = torch.distributed.get_rank()  # unique id for each GPU
+    rank_local = rank_global % torch.cuda.device_count()  # id for each GPU on the current machine
 
-def get_world_size():
-    if not is_dist_avail_and_initialized():
-        return 1
-    return torch.distributed.get_world_size()
-
-
-def get_rank():
-    if not is_dist_avail_and_initialized():
-        return 0
-    return torch.distributed.get_rank()
-
-
-def is_main_process():
-    return get_rank() == 0
-
-
-def init_distributed_mode(args):
-
-    distributed = False
-    world_size = 0
-    rank_global = -1
-    rank_local = -1
-
-    if "CUDA_VISIBLE_DEVICES" in os.environ:
-        devices = os.environ["CUDA_VISIBLE_DEVICES"]
-
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        world_size = int(os.environ["WORLD_SIZE"])
-        rank_global = int(os.environ["RANK"])
-        rank_local = int(os.environ["LOCAL_RANK"])
-    else:
-        print("Not using distributed mode")
-        return distributed, world_size, rank_global, rank_local
-
-    distributed = True
-
-    torch.cuda.device(devices)
-    torch.distributed.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank_global)
     torch.distributed.barrier()
     setup_for_distributed(rank_global == 0)
 
-    return distributed, world_size, rank_global, rank_local
+    return True, world_size, rank_global, rank_local, torch.device("cuda", rank_local)
