@@ -19,5 +19,6 @@ setup(
         "packaging",
         "tensorboard",
         "six",
+        "timm",
     ],
 )

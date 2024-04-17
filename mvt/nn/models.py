@@ -1,6 +1,7 @@
 import os, copy
 
 import torch
+import timm
 
 import mvt.utils
 import mvt.nn.layers
@@ -11,36 +12,42 @@ def get_model(name: str, input_shape: tuple, num_classes: int=None, checkpoint: 
     """
     Get a model instance from the model zoo.
     It also performs a fake forward pass to check if the model works properly.
+
+    A model could be loaded with pretrained weights from the model zoo or a custom checkpoint file.
+    If `checkpoint` is set to 'imagenet', the model will be loaded with the weights pretrained on ImageNet
+    according to the `timm` model zoo availability. Custom models, ie. not in the `timm` model zoo, should be
+    defined in the `MODEL_ZOO` dictionary and ignore the `checkpoint` parameter if it is equal to 'imagenet'.
     
     Parameters
     ----------
     `name` (str): model name or path to a custom model file
     `input_shape` (tuple): input tensor shape as tuple (C, H, W)
     `num_classes` (int): number of classes
+    `checkpoint` (str): path to the checkpoint file; if 'imagenet', load the weights pretrained on ImageNet, if available
+    `strict` (bool): whether to strictly enforce that the keys in `state_dict` match the keys returned by this module's `state_dict`
     
     Return
     ------
     `model` (torch.nn.Module): model instance
     """
 
+    # custom model architectures that are not in the timm model zoo
     MODEL_ZOO = {
         "alexnet": AlexNet,
-        "resnet18": ResNet18,
         "cifar_cnn_pytorch": CifarCNN_Pytorch,
         "cifar_cnn_mlm": CifarCNN_MLM,
     }
 
-    kwargs = {
-        "input_shape": input_shape,
-        "num_classes": num_classes,
-    }
+    assert name in MODEL_ZOO or name in timm.list_models(), f"Model not found: {name}"
 
-    assert name in MODEL_ZOO or os.path.isfile(name), f"Model not found: {name}"
-    model = MODEL_ZOO[name](**kwargs)
+    if name in MODEL_ZOO:
+        model = MODEL_ZOO[name](input_shape=input_shape, num_classes=num_classes)
+    else:
+        model = timm.create_model(name, num_classes=num_classes, pretrained=(checkpoint == "imagenet"))
 
     _ = mvt.nn.utils.fake_forward_pass(model, input_shape)
 
-    if checkpoint is not None:
+    if checkpoint is not None and checkpoint != "imagenet":
         model = load_model_weights(model, checkpoint, strict)
 
     return model
@@ -118,53 +125,6 @@ class AlexNet(torch.nn.Module):
                 mvt.nn.layers.Linear(4096, 4096, activation=act_fn),
                 torch.nn.Dropout(),
                 mvt.nn.layers.Linear(4096, num_classes, activation="softmax"),
-            )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-        x = self.classifier(x)
-        return x
-
-
-class ResNet18(torch.nn.Module):
-
-    def __init__(self, input_shape: tuple=(3, 224, 224), num_classes: int=1000, no_top: bool=False, *args, **kwargs) -> None:
-        """
-        ResNet-18 model.
-        
-        Parameters
-        ----------
-        `input_shape` (tuple): input tensor shape as tuple (C, H, W)
-        `num_classes` (int): number of classes
-        `no_top` (bool): whether to include the top layers
-        """
-        super().__init__()
-
-        use_bn = True
-        act_fn = "relu"
-
-        self.features = torch.nn.Sequential(
-            mvt.nn.layers.Conv(input_shape[0], 64, kernel_size=7, stride=2, padding=3, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.MaxPool(kernel_size=3, stride=2),
-            mvt.nn.layers.ResBlockBasic( 64,  64, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic( 64,  64, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic( 64, 128, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic(128, 128, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic(128, 256, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic(256, 256, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic(256, 512, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.ResBlockBasic(512, 512, kernel_size=3, padding=1, batch_norm=use_bn, activation=act_fn),
-            mvt.nn.layers.GlobalAvgPool(),
-        )
-
-        num_features = self.features(torch.zeros((1, *input_shape))).view(-1).size(0)
-
-        if no_top:
-            self.classifier = lambda x: x
-        else:
-            self.classifier = torch.nn.Sequential(
-                mvt.nn.layers.Flatten(),
-                mvt.nn.layers.Linear(num_features, num_classes, activation="softmax"),
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
