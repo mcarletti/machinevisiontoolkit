@@ -8,6 +8,7 @@ Create a new conda environment and install the required packages.
 
 ```bash
 conda create -n mvt
+conda activate mvt
 conda install python=3.7
 
 pip install .
