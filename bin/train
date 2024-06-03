@@ -5,6 +5,7 @@ import argparse, os, pickle
 import cv2, tqdm, torch
 import torch.utils.data
 import torchinfo
+import imgaug.augmenters as iaa
 
 import mvt.utils
 import mvt.metrics
@@ -26,7 +27,16 @@ def main(args):
     # create datasets
     # ===============
 
+    augment = iaa.Sequential([
+        iaa.Fliplr(0.5),
+        iaa.Crop(percent=(0, 0.1)),
+        iaa.LinearContrast((0.75, 1.5)),
+        iaa.Multiply((0.8, 1.2), per_channel=0.2),
+    ], random_order=True)
+
     def transform(image, label, target_shape=input_shape[1:]):
+        if args.augment:
+            image = augment(images=[image])[0]
         image = cv2.resize(image, target_shape)
         image = (image / 255 - 0.5).astype("float32")
         image = image.transpose(2, 0, 1)
@@ -199,6 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--optimizer",    type=str,   default="sgd", choices=["sgd", "adam"])
     parser.add_argument("--lr",           type=float, default=1e-2)
     parser.add_argument("--output",       type=str,   required=True)
+    parser.add_argument("--augment",      action="store_true")
     # misc
     parser.add_argument("--seed",         type=int,   default=0)
     parser.add_argument("--workers",      type=int,   default=2)

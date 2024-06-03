@@ -20,5 +20,6 @@ setup(
         "tensorboard",
         "six",
         "timm",
+        "imgaug",
     ],
 )
