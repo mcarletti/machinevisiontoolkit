@@ -210,22 +210,29 @@ class COCO(_Dataset):
         print(f"Loading COCO annotations: {file_path}")
         file_data = json.load(open(file_path, "r"))
 
-        self.data = [None] * len(file_data["images"])
+        # create a dictionary of annotations to map image ids to their annotations
+        ann_dict = {}
+        for ann_data in file_data["annotations"]:
+            image_id = ann_data["image_id"]
+            if image_id not in ann_dict:
+                ann_dict[image_id] = []
+            ann_dict[image_id].append(ann_data)
+
+        self.data = []
         class_ids = set()
-        counter = 0
 
         print("Parsing COCO annotations")
         for img_data in tqdm.tqdm(file_data["images"]):
             image_path = os.path.join(root, "coco", "images", f"{split}2017", img_data["file_name"])
-            boxes = ()
-            for ann_data in file_data["annotations"]:
-                if ann_data["image_id"] == img_data["id"]:
+            image_id = img_data["id"]
+            boxes = []
+            if image_id in ann_dict:
+                for ann_data in ann_dict[image_id]:
                     x, y, w, h = [int(v) for v in ann_data["bbox"]]
                     cls = int(ann_data["category_id"])
-                    boxes += ([x, y, x+w, y+h, cls],)
+                    boxes.append([x, y, x+w, y+h, cls])
                     class_ids.add(cls)
-            self.data[counter] = [image_path, boxes]
-            counter += 1
+            self.data.append([image_path, boxes])
 
         self.num_classes = len(class_ids)
 
