@@ -119,7 +119,7 @@ class _Dataset(ABC, torch.utils.data.Dataset):
         ------
         tuple: batch as a tuple of stacked tensors (samples, labels)"""
         samples, labels = zip(*batch)
-        return torch.stack(samples, 0), torch.stack(labels, 0)
+        return torch.stack(samples, 0), torch.cat(labels, 0)
 
 
 class CIFAR(_Dataset):
@@ -234,6 +234,7 @@ class COCO(_Dataset):
                     class_ids.add(cls)
             self.data.append([image_path, boxes])
 
+        self.max_boxes_per_image = max([len(d[1]) for d in self.data])
         self.num_classes = len(class_ids)
 
     def _load_sample(self, index: int) -> np.ndarray:
@@ -244,7 +245,10 @@ class COCO(_Dataset):
 
     def _load_labels(self, index: int) -> int:
         labels = self.data[index][1]
-        return labels
+        # pad the boxes with zeros to make them of equal length
+        while len(labels) < self.max_boxes_per_image:
+            labels.append([0, 0, 0, 0, 0])
+        return np.asarray(labels, dtype=np.float32)
 
 
 class ILSVRC(_Dataset):
@@ -286,8 +290,7 @@ class ILSVRC(_Dataset):
         with open(file_path, "r") as fp:
             file_data = fp.readlines()[1:]
 
-        self.data = [None] * len(file_data)
-        counter = 0
+        self.data = []
 
         print("Parsing ILSVRC annotations")
         for line in tqdm.tqdm(file_data):
@@ -297,19 +300,19 @@ class ILSVRC(_Dataset):
             annotations = annotations.split()
 
             if task == "detection":
-                boxes = ()
+                boxes = []
                 for i in range(len(annotations) // 5):
                     synset = annotations[i*5]
                     cls = synset_to_class_id[synset]
                     x0, y0, x1, y1 = [int(v) for v in annotations[i*5+1:i*5+5]]
-                    boxes += ([x0, y0, x1, y1, cls],)
-                self.data[counter] = [image_path, boxes]
+                    boxes.append([x0, y0, x1, y1, cls])
+                self.data.append([image_path, boxes])
             elif task == "classification":
                 synset = annotations[0]
                 cls = synset_to_class_id[synset]
-                self.data[counter] = [image_path, cls]
+                self.data.append([image_path, cls])
 
-            counter += 1
+        self.max_boxes_per_image = max([len(d[1]) for d in self.data])
 
     def _load_sample(self, index: int) -> np.ndarray:
         sample = cv2.imread(self.data[index][0], -1)
@@ -319,4 +322,7 @@ class ILSVRC(_Dataset):
 
     def _load_labels(self, index: int) -> int:
         labels = self.data[index][1]
-        return labels
+        # pad the boxes with zeros to make them of equal length
+        while len(labels) < self.max_boxes_per_image:
+            labels.append([0, 0, 0, 0, 0])
+        return np.asarray(labels, dtype=np.float32)

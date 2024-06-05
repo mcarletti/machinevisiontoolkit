@@ -1,0 +1,51 @@
+#!/usr/bin/env -S python -B
+
+import argparse
+
+import cv2, torch
+import torch.utils.data
+
+import mvt.datasets
+
+
+def main(args):
+
+    def transform(image, label, target_size=(224, 224)):
+        orig_size = image.shape[:2]  # height, width
+        image = cv2.resize(image, target_size) if target_size not in [None, orig_size] else image
+        if args.dataset_task == "detection" and target_size not in [None, orig_size]:
+            scales = [target_size[0] / orig_size[0], target_size[1] / orig_size[1]]
+            for i, (x0, y0, x1, y1, cls) in enumerate(label):
+                label[i] = [x0 * scales[1], y0 * scales[0], x1 * scales[1], y1 * scales[0], cls]
+        return image, label
+
+    dataset = mvt.datasets.get_dataset(args.dataset_name, args.dataset_root, "val", args.dataset_task, transform)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=False)
+
+    for i, (images, targets) in enumerate(dataloader):
+        for i in range(images.shape[0]):
+            image = images[i].numpy()
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+            if args.dataset_task == "detection":
+                boxes = [box for box in targets[i] if torch.prod(box).item() > 0]
+                for box in boxes:
+                    x0, y0, x1, y1 = [v.numpy().item() for v in box[:4]]
+                    cv2.rectangle(image, (int(x0), int(y0)), (int(x1), int(y1)), (255, 0, 0), 1)
+
+            cv2.imshow("image", image)
+            cv2.waitKey(0)
+        break
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    # dataset
+    parser.add_argument("--dataset_root", type=str,   default="datasets")
+    parser.add_argument("--dataset_name", type=str,   default="coco")
+    parser.add_argument("--dataset_task", type=str,   default="detection", choices=["classification", "detection"])
+
+    args = parser.parse_args()
+
+    main(args)
