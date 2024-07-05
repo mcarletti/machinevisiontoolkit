@@ -139,12 +139,13 @@ class Add(_Layer):
 
 class Concat(_Layer):
 
-    def __init__(self):
+    def __init__(self, dim=1):
         """Concatenation layer"""
         super(Concat, self).__init__()
+        self.dim = dim
 
     def forward(self, x: Iterable) -> torch.Tensor:
-        return torch.concat(x)
+        return torch.concat(x, dim=self.dim)
 
 
 class ResBlockBasic(_Layer):

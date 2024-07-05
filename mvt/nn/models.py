@@ -33,15 +33,17 @@ def get_model(name: str, input_shape: tuple, num_classes: int=None, checkpoint: 
 
     # custom model architectures that are not in the timm model zoo
     MODEL_ZOO = {
-        "alexnet": AlexNet,
-        "cifar_cnn_pytorch": CifarCNN_Pytorch,
-        "cifar_cnn_mlm": CifarCNN_MLM,
+        "alexnet": (AlexNet, {}),
+        "cifar_cnn_pytorch": (CifarCNN_Pytorch, {}),
+        "cifar_cnn_mlm": (CifarCNN_MLM, {}),
+        "yolo": (YOLO, {"checkpoint": checkpoint}),
     }
 
     assert name in MODEL_ZOO or name in timm.list_models(), f"Model not found: {name}"
 
     if name in MODEL_ZOO:
-        model = MODEL_ZOO[name](input_shape=input_shape, num_classes=num_classes)
+        model_class, kwargs = MODEL_ZOO[name]
+        model = model_class(input_shape=input_shape, num_classes=num_classes, **kwargs)
     else:
         model = timm.create_model(name, num_classes=num_classes, pretrained=(checkpoint == "imagenet"))
 
@@ -226,3 +228,80 @@ class CifarCNN_MLM(torch.nn.Module):
         x = self.features(x)
         x = self.classifier(x)
         return x
+
+
+class YOLO(torch.nn.Module):
+
+    def __init__(self, input_shape: tuple=(3, 224, 224), num_classes: int=80, checkpoint=None, *args, **kwargs) -> None:
+        """
+        YOLO model.
+        
+        Parameters
+        ----------
+        `input_shape` (tuple): input tensor shape as tuple (C, H, W)
+        `num_classes` (int): number of classes
+        `checkpoint` (str): path to the checkpoint file
+        """
+        super().__init__()
+
+        self.backbone = timm.create_model("resnet18", pretrained=(checkpoint == "imagenet"), features_only=True, in_chans=input_shape[0])
+
+        self.sppf = mvt.nn.layers.SPPF(512, 1024)
+
+        self.panet_conv0     = mvt.nn.layers.Conv(1024, 512, kernel_size=1)
+        self.panet_add0      = mvt.nn.layers.Add()
+        self.panet_upsample0 = torch.nn.Upsample(scale_factor=2, mode="nearest")
+
+        self.panet_conv1     = mvt.nn.layers.Conv(512, 256, kernel_size=1)
+        self.panet_add1      = mvt.nn.layers.Add()
+        self.panet_upsample1 = torch.nn.Upsample(scale_factor=2, mode="nearest")
+
+        self.panet_conv2     = mvt.nn.layers.Conv(256, 256, kernel_size=1)
+        self.panet_add2      = mvt.nn.layers.Add()
+
+        self.panet_conv3     = mvt.nn.layers.Conv(256, 512, kernel_size=3, stride=2, padding=1)
+        self.panet_add3      = mvt.nn.layers.Add()
+
+        self.panet_conv4     = mvt.nn.layers.Conv(512, 1024, kernel_size=3, stride=2, padding=1)
+
+        self.head = lambda x: x
+
+        if num_classes > 0:
+
+            fake_input = torch.zeros((1, *input_shape))
+            fake_output = self.forward(fake_input)
+            num_features = fake_output.view(-1).size(0)
+
+            self.head = torch.nn.Sequential(
+                mvt.nn.layers.Flatten(),
+                torch.nn.Dropout(0.5),
+                mvt.nn.layers.Linear(num_features, 128, activation="relu"),
+                torch.nn.Dropout(0.5),
+                mvt.nn.layers.Linear(128, num_classes, activation="softmax"),
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        bb_outs = self.backbone(x)  # this populates self.features
+        x00 = bb_outs[-1]
+
+        x01 = self.sppf(x00)
+
+        x02 = self.panet_conv0(x01)
+        x03 = self.panet_add0(x02, bb_outs[-1])
+        x04 = self.panet_upsample0(x03)
+
+        x05 = self.panet_conv1(x04)
+        x06 = self.panet_add1(x05, bb_outs[-2])
+        x07 = self.panet_upsample1(x06)
+
+        x08 = self.panet_conv2(x07)
+        x09 = self.panet_add2(x08, x07)
+
+        x10 = self.panet_conv3(x09)
+        x11 = self.panet_add3(x10, x04)
+
+        x12 = self.panet_conv4(x11)
+
+        y = self.head(x12)
+
+        return y
