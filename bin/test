@@ -46,6 +46,9 @@ def main(args):
     model = model.to(device)
 
     torchinfo.summary(model, input_size=(1, *input_shape))
+    latency_mm = mvt.nn.utils.estimate_model_latency(model, input_shape)
+    print(f"Estimated latency: {latency_mm:.2f} ms")
+    print("=" * 101)
 
     # ================
     # start validation
