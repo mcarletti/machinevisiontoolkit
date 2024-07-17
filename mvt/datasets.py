@@ -253,7 +253,7 @@ class COCO(_Dataset):
 
 class ILSVRC(_Dataset):
 
-    def __init__(self, root: str, split: str, task: str="detection", transform: callable=None, *args, **kwargs):
+    def __init__(self, root: str, split: str, task: str="classification", transform: callable=None, *args, **kwargs):
         """
         Initialize the ILSVRC dataset.
         
@@ -284,6 +284,7 @@ class ILSVRC(_Dataset):
             counter += 1
 
         self.num_classes = len(synset_to_class_id)
+        self.max_boxes_per_image = 0
 
         file_path = os.path.join(root, "ILSVRC", f"LOC_{split}_solution.csv")
         print(f"Loading ILSVRC annotations: {file_path}")
@@ -307,12 +308,11 @@ class ILSVRC(_Dataset):
                     x0, y0, x1, y1 = [int(v) for v in annotations[i*5+1:i*5+5]]
                     boxes.append([x0, y0, x1, y1, cls])
                 self.data.append([image_path, boxes])
+                self.max_boxes_per_image = max([len(d[1]) for d in self.data])
             elif task == "classification":
                 synset = annotations[0]
                 cls = synset_to_class_id[synset]
                 self.data.append([image_path, cls])
-
-        self.max_boxes_per_image = max([len(d[1]) for d in self.data])
 
     def _load_sample(self, index: int) -> np.ndarray:
         sample = cv2.imread(self.data[index][0], -1)
@@ -322,7 +322,12 @@ class ILSVRC(_Dataset):
 
     def _load_labels(self, index: int) -> int:
         labels = self.data[index][1]
-        # pad the boxes with zeros to make them of equal length
-        while len(labels) < self.max_boxes_per_image:
-            labels.append([0, 0, 0, 0, 0])
-        return np.asarray(labels, dtype=np.float32)
+        dtype = np.int64  # default dtype for classification
+
+        # if the task is detection, pad the boxes with zeros to make them of equal length
+        if isinstance(labels, list):
+            dtype = np.float32  # dtype for detection
+            while len(labels) < self.max_boxes_per_image:
+                labels.append([0, 0, 0, 0, 0])
+
+        return np.asarray(labels, dtype)
