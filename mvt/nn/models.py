@@ -244,25 +244,32 @@ class YOLO(torch.nn.Module):
         """
         super().__init__()
 
-        self.backbone = timm.create_model("resnet18", pretrained=(checkpoint == "imagenet"), features_only=True, in_chans=input_shape[0])
+        self.backbone = timm.create_model("tf_mobilenetv3_small_minimal_100", pretrained=(checkpoint == "imagenet"), features_only=True, in_chans=input_shape[0])
 
-        self.sppf = mvt.nn.layers.SPPF(512, 1024)
+        # get the number of output channels of the backbone
+        # to feed the SPPF and PANet; at least two outputs are required
+        fake_input = torch.zeros((1, *input_shape))
+        fake_output = self.backbone(fake_input)
+        assert len(fake_output) >= 2, "Error: The backbone should have at least two outputs to feed the PANet."
+        bb_ch_out = fake_output[-1].shape[1]
 
-        self.panet_conv0     = mvt.nn.layers.Conv(1024, 512, kernel_size=1)
+        self.sppf = mvt.nn.layers.SPPF(bb_ch_out, 1024)
+
+        self.panet_conv0     = mvt.nn.layers.Conv(1024, fake_output[-1].shape[1], kernel_size=1)
         self.panet_add0      = mvt.nn.layers.Add()
         self.panet_upsample0 = torch.nn.Upsample(scale_factor=2, mode="nearest")
 
-        self.panet_conv1     = mvt.nn.layers.Conv(512, 256, kernel_size=1)
+        self.panet_conv1     = mvt.nn.layers.Conv(fake_output[-1].shape[1], fake_output[-2].shape[1], kernel_size=1)
         self.panet_add1      = mvt.nn.layers.Add()
         self.panet_upsample1 = torch.nn.Upsample(scale_factor=2, mode="nearest")
 
-        self.panet_conv2     = mvt.nn.layers.Conv(256, 256, kernel_size=1)
+        self.panet_conv2     = mvt.nn.layers.Conv(fake_output[-2].shape[1], fake_output[-2].shape[1], kernel_size=1)
         self.panet_add2      = mvt.nn.layers.Add()
 
-        self.panet_conv3     = mvt.nn.layers.Conv(256, 512, kernel_size=3, stride=2, padding=1)
+        self.panet_conv3     = mvt.nn.layers.Conv(fake_output[-2].shape[1], fake_output[-1].shape[1], kernel_size=3, stride=2, padding=1)
         self.panet_add3      = mvt.nn.layers.Add()
 
-        self.panet_conv4     = mvt.nn.layers.Conv(512, 1024, kernel_size=3, stride=2, padding=1)
+        self.panet_conv4     = mvt.nn.layers.Conv(fake_output[-1].shape[1], 1024, kernel_size=3, stride=2, padding=1)
 
         self.head = lambda x: x
 
