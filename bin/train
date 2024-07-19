@@ -59,6 +59,8 @@ def main(args):
     assert dataset_train.num_classes == dataset_val.num_classes, "Train and val datasets must have the same number of classes"
     num_classes = dataset_train.num_classes
 
+    print(f"Number of classes: {num_classes}")
+
     # create dataloaders
     dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=(sampler_train is None), num_workers=args.workers, sampler=sampler_train)
     dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, sampler=sampler_val)
@@ -193,6 +195,8 @@ def main(args):
 
     if distributed:
         torch.distributed.destroy_process_group()
+
+    torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

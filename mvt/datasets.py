@@ -22,11 +22,12 @@ def get_dataset(name: str, root: str, split: str, task: str, transform: callable
     """
 
     DATA_ZOO = {
-        "cifar10":  (CIFAR,  {"num_classes":  10}),
-        "cifar20":  (CIFAR,  {"num_classes":  20}),
-        "cifar100": (CIFAR,  {"num_classes": 100}),
-        "imagenet": (ILSVRC, {}),
-        "coco":     (COCO,   {}),
+        "cifar10":  (CIFAR,        {"num_classes":  10}),
+        "cifar20":  (CIFAR,        {"num_classes":  20}),
+        "cifar100": (CIFAR,        {"num_classes": 100}),
+        "imagenet": (ILSVRC,       {}),
+        "coco":     (COCO,         {}),
+        "pets":     (OxfordIITPet, {}),
     }
 
     assert name in DATA_ZOO, f"Invalid dataset name: {name}"
@@ -196,7 +197,7 @@ class COCO(_Dataset):
         ----------
         `root` (str): path to the dataset root directory
         `split` (str): split of the dataset (train, val)
-        `task` (str): task to perform (detection, classification)
+        `task` (str): task to perform (detection, segmentation)
         `transform` (callable): transformation function to apply to the samples
         """
         super(COCO, self).__init__(transform=transform, *args, **kwargs)
@@ -261,7 +262,7 @@ class ILSVRC(_Dataset):
         ----------
         `root` (str): path to the dataset root directory
         `split` (str): split of the dataset (train, val)
-        `task` (str): task to perform (detection, classification)
+        `task` (str): task to perform (classification, detection)
         `transform` (callable): transformation function to apply to the samples
         """
         super(ILSVRC, self).__init__(transform=transform, *args, **kwargs)
@@ -331,3 +332,50 @@ class ILSVRC(_Dataset):
                 labels.append([0, 0, 0, 0, 0])
 
         return np.asarray(labels, dtype)
+
+
+class OxfordIITPet(_Dataset):
+
+    def __init__(self, root: str, split: str, task: str="classification", transform: callable=None, *args, **kwargs) -> None:
+        """
+        Initialize the Oxford IIIT Pet dataset.
+        
+        Parameters
+        ----------
+        `root` (str): path to the dataset root directory
+        `split` (str): split of the dataset (train, val)
+        `task` (str): task to perform (classification, detection, segmentation)
+        """
+
+        super(OxfordIITPet, self).__init__(transform=transform, *args, **kwargs)
+
+        assert os.path.exists(root), f"Dataset directory not found: {root}"
+        assert split in ["train", "val"], f"Invalid split: {split}"
+        assert task in ["classification"], "Oxford IIIT Pet dataset currently supports only 'classification' task"
+
+        file_path = os.path.join(root, "oxford_iiit_pet", "annotations", "trainval.txt" if split == "train" else "test.txt")
+        print(f"Loading Oxford IIIT Pet annotations: {file_path}")
+        with open(file_path, "r") as fp:
+            file_data = fp.readlines()
+
+        self.data = []
+
+        print("Parsing Oxford IIIT Pet annotations")
+        for line in tqdm.tqdm(file_data):
+            image_name, class_id, specie, breed_id = line.split()
+            image_path = os.path.join(root, "oxford_iiit_pet", "images", f"{image_name}.jpg")
+            if task == "classification":
+                self.data.append([image_path, int(specie) - 1])
+
+        self.num_classes = len(set([d[1] for d in self.data]))
+
+    def _load_sample(self, index: int) -> np.ndarray:
+        sample = cv2.imread(self.data[index][0], -1)
+        assert sample is not None, f"Image not found: {self.data[index][0]}"
+        if len(sample.shape) == 2: sample = np.stack([sample] * 3, -1)
+        sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB)
+        return sample
+
+    def _load_labels(self, index: int) -> int:
+        assert self.data[index][1] < self.num_classes, f"Invalid class id: {self.data[index][1]}"
+        return self.data[index][1]
