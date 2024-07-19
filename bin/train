@@ -85,7 +85,8 @@ def main(args):
     # =============
 
     loss_fn   = mvt.nn.losses.get_loss(args.loss)
-    optimizer = mvt.nn.optimizers.get_optimizers(args.optimizer, model, args.lr)
+    optimizer = mvt.nn.optimizers.get_optimizer(args.optimizer, model, args.lr)
+    scheduler = mvt.nn.optimizers.get_scheduler(optimizer, args.lr_scheduler, args.epochs)
     metric_fn = mvt.metrics.accuracy_from_logits if args.dataset_task == "classification" else None
 
     # ===========
@@ -134,9 +135,15 @@ def main(args):
 
         print("Train metric: {:.4f}".format(metric))
 
+        # update scheduler
+        lr = [g["lr"] for g in optimizer.param_groups]
+        scheduler.step()
+
         # update logs
         logs.update({"train/loss": loss.to("cpu").item()})
         logs.update({"train/metric": metric})
+        for i in range(len(lr)):
+            logs.update({f"train/lr{i}": lr[i]})
 
         # ---------------
         # validation step
@@ -216,6 +223,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size",   type=int,   default=128)
     parser.add_argument("--optimizer",    type=str,   default="sgd", choices=["sgd", "adam"])
     parser.add_argument("--lr",           type=float, default=1e-2)
+    parser.add_argument("--lr_scheduler", type=str,   default="step", choices=["constant", "linear", "step", "plateau", "cosine"])
     parser.add_argument("--output",       type=str,   required=True)
     parser.add_argument("--augment",      action="store_true")
     # misc
