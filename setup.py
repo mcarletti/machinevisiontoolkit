@@ -21,5 +21,6 @@ setup(
         "six",
         "timm",
         "imgaug",
+        "scikit-learn",
     ],
 )
