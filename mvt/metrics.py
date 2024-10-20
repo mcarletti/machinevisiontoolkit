@@ -1,6 +1,31 @@
 import torch
 
 
+def get_metric(name: str) -> torch.nn.Module:
+    """
+    Get metric function by name.
+    
+    Params:
+    -------
+    `name` (str): metric function name.
+
+    Returns:
+    --------
+    `metric_fn` (callable): metric function instance.
+    """
+
+    METRIC_ZOO = {
+        "accuracy": accuracy,
+        "accuracy_from_logits": accuracy_from_logits,
+    }
+
+    assert name in METRIC_ZOO, f"Invalid metric name: {name}"
+
+    metric_fn = METRIC_ZOO.get(name)
+
+    return metric_fn
+
+
 def accuracy(outputs: torch.tensor, labels: torch.tensor) -> float:
     """
     Compute accuracy.

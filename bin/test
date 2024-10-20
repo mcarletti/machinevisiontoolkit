@@ -55,7 +55,7 @@ def main(args):
     # ================
 
     # aux variables
-    metric_fn = mvt.metrics.accuracy_from_logits if args.dataset_task == "classification" else None
+    metric_fn = mvt.metrics.get_metric(args.metric)
     metric = 0
 
     model.eval()
@@ -84,6 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_name", type=str,   default="cifar10")
     parser.add_argument("--dataset_task", type=str,   default="classification", choices=["classification", "detection"])
     # validation
+    parser.add_argument("--metric",       type=str,   default="accuracy_from_logits")
     parser.add_argument("--batch_size",   type=int,   default=128)
     # misc
     parser.add_argument("--workers",      type=int,   default=2)

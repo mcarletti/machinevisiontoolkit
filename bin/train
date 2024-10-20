@@ -5,7 +5,6 @@ import argparse, os, pickle
 import cv2, tqdm, torch
 import torch.utils.data
 import torchinfo
-import imgaug.augmenters as iaa
 
 import mvt.nn.utils
 import mvt.utils
@@ -28,16 +27,7 @@ def main(args):
     # create datasets
     # ===============
 
-    augment = iaa.Sequential([
-        iaa.Fliplr(0.5),
-        iaa.Crop(percent=(0, 0.1)),
-        iaa.LinearContrast((0.75, 1.5)),
-        iaa.Multiply((0.8, 1.2), per_channel=0.2),
-    ], random_order=True)
-
     def transform(image, label, target_shape=input_shape[1:]):
-        if args.augment:
-            image = augment(images=[image])[0]
         image = cv2.resize(image, target_shape)
         image = (image / 255 - 0.5).astype("float32")
         image = image.transpose(2, 0, 1)
@@ -87,7 +77,7 @@ def main(args):
     loss_fn   = mvt.nn.losses.get_loss(args.loss)
     optimizer = mvt.nn.optimizers.get_optimizer(args.optimizer, model, args.lr)
     scheduler = mvt.nn.optimizers.get_scheduler(optimizer, args.lr_scheduler, args.epochs)
-    metric_fn = mvt.metrics.accuracy_from_logits if args.dataset_task == "classification" else None
+    metric_fn = mvt.metrics.get_metric(args.metric)
 
     # ===========
     # start train
@@ -219,6 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_task", type=str,   default="classification", choices=["classification", "detection"])
     # training
     parser.add_argument("--loss",         type=str,   default="categorical_cross_entropy")
+    parser.add_argument("--metric",       type=str,   default="accuracy_from_logits")
     parser.add_argument("--epochs",       type=int,   default=10)
     parser.add_argument("--batch_size",   type=int,   default=128)
     parser.add_argument("--optimizer",    type=str,   default="sgd", choices=["sgd", "adam"])
