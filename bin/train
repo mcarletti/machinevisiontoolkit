@@ -5,6 +5,7 @@ import argparse, os, pickle
 import cv2, tqdm, torch
 import torch.utils.data
 import torchinfo
+import numpy as np
 
 import mvt.nn.utils
 import mvt.utils
@@ -29,6 +30,8 @@ def main(args):
 
     def transform(image, label, target_shape=input_shape[1:]):
         image = cv2.resize(image, target_shape)
+        if len(image.shape) == 2:
+            image = np.expand_dims(image, axis=-1)
         image = (image / 255 - 0.5).astype("float32")
         image = image.transpose(2, 0, 1)
         return image, label
@@ -86,7 +89,7 @@ def main(args):
     logger_cb = mvt.nn.callbacks.Logger(args.output)
 
     enable_amp = (device.type == "cuda")  # automatic mixed precision
-    scaler = torch.cuda.amp.GradScaler(enabled=enable_amp)
+    scaler = torch.amp.GradScaler(enabled=enable_amp)
 
     best_metric = 0
 
@@ -112,7 +115,7 @@ def main(args):
             images = images.to(device)
             labels = labels.to(device)
             # forward pass and loss computation
-            with torch.cuda.amp.autocast(enable_amp):
+            with torch.amp.autocast(device.type, enabled=enable_amp):
                 outputs = model(images)
                 loss = loss_fn(outputs, labels)
             # backward pass

@@ -5,6 +5,7 @@ import argparse
 import cv2, tqdm, torch
 import torch.utils.data
 import torchinfo
+import numpy as np
 
 import mvt.utils
 import mvt.metrics
@@ -24,6 +25,8 @@ def main(args):
 
     def transform(image, label, target_shape=input_shape[1:]):
         image = cv2.resize(image, target_shape)
+        if len(image.shape) == 2:
+            image = np.expand_dims(image, axis=-1)
         image = (image / 255 - 0.5).astype("float32")
         image = image.transpose(2, 0, 1)
         return image, label

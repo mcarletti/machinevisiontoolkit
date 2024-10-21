@@ -36,6 +36,7 @@ def get_model(name: str, input_shape: tuple, num_classes: int=None, checkpoint: 
         "alexnet": (AlexNet, {}),
         "cifar_cnn_pytorch": (CifarCNN_Pytorch, {}),
         "cifar_cnn_mlm": (CifarCNN_MLM, {}),
+        "mnist_ffn": (MnistFFN, {}),
         "yolo": (YOLO, {"checkpoint": checkpoint}),
     }
 
@@ -223,6 +224,35 @@ class CifarCNN_MLM(torch.nn.Module):
                 torch.nn.Dropout(0.5),
                 mvt.nn.layers.Linear(128, num_classes, activation="softmax"),
             )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+
+
+class MnistFFN(torch.nn.Module):
+
+    def __init__(self, input_shape: tuple=(1, 28, 28), num_classes: int=10, *args, **kwargs) -> None:
+        """
+        FFN model for MNIST.
+        
+        Parameters
+        ----------
+        `input_shape` (tuple): input tensor shape as tuple (C, H, W)
+        `num_classes` (int): number of classes
+        """
+        super().__init__()
+
+        act_fn = "relu"
+
+        self.features = torch.nn.Sequential(
+            mvt.nn.layers.Flatten(),
+            mvt.nn.layers.Linear(input_shape[1]*input_shape[2], 128, activation=act_fn),
+            mvt.nn.layers.Linear(128, 64, activation=act_fn),
+        )
+
+        self.classifier = mvt.nn.layers.Linear(64, num_classes, activation="softmax")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)

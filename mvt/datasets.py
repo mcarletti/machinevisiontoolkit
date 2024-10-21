@@ -22,6 +22,7 @@ def get_dataset(name: str, root: str, split: str, task: str, transform: callable
     """
 
     DATA_ZOO = {
+        "mnist":    (MNIST,        {}),
         "cifar10":  (CIFAR,        {"num_classes":  10}),
         "cifar20":  (CIFAR,        {"num_classes":  20}),
         "cifar100": (CIFAR,        {"num_classes": 100}),
@@ -121,6 +122,35 @@ class _Dataset(ABC, torch.utils.data.Dataset):
         tuple: batch as a tuple of stacked tensors (samples, labels)"""
         samples, labels = zip(*batch)
         return torch.stack(samples, 0), torch.cat(labels, 0)
+
+
+class MNIST(_Dataset):
+
+    def __init__(self, root: str, split: str, task: str="classification", transform: callable=None, *args, **kwargs) -> None:
+        """
+        Initialize the MNIST dataset.
+
+        Parameters
+        ----------
+        `root` (str): path to the dataset root directory
+        `split` (str): split of the dataset (train, val)
+        `task` (str): task to perform (classification)
+        `transform` (callable): transformation function to apply to the samples
+        """
+        assert os.path.exists(root), f"Dataset directory not found: {root}"
+        assert split in ["train", "val"], f"Invalid split: {split}"
+        assert task in ["classification"], "MNIST dataset supports only 'classification' task"
+        super(MNIST, self).__init__(transform=transform, *args, **kwargs)
+
+        import torchvision
+        self.data = torchvision.datasets.MNIST(root, bool(split == "train"), None, None, True)
+        self.num_classes = 10
+
+    def _load_sample(self, index: int) -> np.ndarray:
+        return np.asarray(self.data[index][0])
+
+    def _load_labels(self, index: int) -> int:
+        return int(self.data[index][1])
 
 
 class CIFAR(_Dataset):
