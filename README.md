@@ -23,7 +23,7 @@ MVT (Machine Vision Toolkit) is a collection of utilities and scripts to facilit
 * [x] Imagenet
 * [x] Oxford IIIT Pet
 * [ ] Cityscapes
-* [ ] MNIST
+* [x] MNIST
 * [ ] CINIC-10
 
 ### Training
